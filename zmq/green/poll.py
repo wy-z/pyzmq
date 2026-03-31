@@ -80,6 +80,20 @@ class _Poller(_original_Poller):
                 if events or timeout == 0:
                     return events
 
+                # Clear ZMQ FD signaling so select.select() truly blocks.
+                # Without this, internal ZMQ events (e.g. dead peer cleanup)
+                # can leave the FD stuck readable while poll(0) finds no user
+                # events, causing a busy-spin (~300µs/iteration).
+                for socket, _ in self.sockets:
+                    if isinstance(socket, zmq.Socket):
+                        socket.getsockopt(zmq.EVENTS)
+
+                # Re-check: a real event may have arrived between the first
+                # poll(0) and the EVENTS drain above.
+                events = super().poll(0)
+                if events:
+                    return events
+
                 # wait for activity on sockets in a green way
                 # set a minimum poll frequency,
                 # because gevent < 1.0 cannot be trusted to catch edge-triggered FD events
